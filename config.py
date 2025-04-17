@@ -26,8 +26,11 @@ MODEL_PARAMS = {
 SEARCH_PARAMS = {
     "max_results": 3,  # Nombre de résultats à retourner
     "max_images_per_page": 2,  # Nombre maximum d'images à traiter par page
-    "max_total_images": 4  # Nombre maximum d'images total pour Pixtral
+    "max_total_images": 4,  # Nombre maximum d'images total pour Pixtral
+    "chunk_size": 512,  # Taille des chunks de texte
+    "chunk_overlap": 50,  # Chevauchement entre les chunks
+    "min_chunk_length": 50  # Longueur minimale d'un chunk
 }
 
 # Modèle d'embedding
-EMBEDDING_MODEL = "bert-base-multilingual-cased"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"  # Meilleur modèle multilingue pour Pixtral

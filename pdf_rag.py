@@ -14,10 +14,18 @@ from dataclasses import dataclass
 import uuid
 
 @dataclass
+class TextChunk:
+    text: str  # Contenu du chunk
+    source: str  # Nom du fichier source
+    page: int  # Numéro de page
+    images: List[Image.Image]  # Images associées au chunk
+
+@dataclass
 class PDFContent:
     source: str
     pages: List[dict]  # Liste des pages avec leur texte et images
     total_text: str  # Texte complet du PDF
+    chunks: List[TextChunk]  # Chunks de texte pour la recherche
 
 from config import (PIXTRAL_URL, MISTRAL_URL, MODEL_PARAMS, SEARCH_PARAMS, 
                   TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER, PIXTRAL_PATH,
@@ -85,61 +93,128 @@ class PDFProcessor:
         # Encoder directement l'image en base64 avec le bon format
         return self.encode_image_base64(image)
 
+    def create_chunks(self, text: str, source: str, page: int, images: List[Image.Image]) -> List[TextChunk]:
+        """Découpe un texte en chunks avec chevauchement."""
+        chunks = []
+        words = text.split()
+        chunk_size = SEARCH_PARAMS['chunk_size']
+        overlap = SEARCH_PARAMS['chunk_overlap']
+        min_length = SEARCH_PARAMS['min_chunk_length']
+        
+        for i in range(0, len(words), chunk_size - overlap):
+            chunk_words = words[i:i + chunk_size]
+            if len(chunk_words) < min_length:  # Ignorer les chunks trop courts
+                continue
+            
+            chunk = TextChunk(
+                text=' '.join(chunk_words),
+                source=source,
+                page=page,
+                images=images
+            )
+            chunks.append(chunk)
+        
+        return chunks
+    
     def process_pdf_directory(self) -> None:
         """Traite tous les PDF dans le dossier et crée l'index de recherche."""
         print(f"Début du traitement des PDF dans {self.pdf_folder}")
         self.pdfs = []
-        all_texts = []
+        all_chunks = []
         
         for filename in os.listdir(self.pdf_folder):
             if filename.endswith('.pdf'):
                 pdf_path = os.path.join(self.pdf_folder, filename)
                 print(f"Traitement de {filename}...")
                 
-                # Extraire tout le contenu du PDF
+                # Extraire le contenu du PDF
                 pdf_content = self.extract_from_pdf(pdf_path)
                 
-                # Stocker le contenu du PDF
+                # Créer les chunks pour chaque page
+                pdf_chunks = []
+                for page in pdf_content.pages:
+                    page_chunks = self.create_chunks(
+                        text=page['text'],
+                        source=pdf_content.source,
+                        page=page['number'],
+                        images=page['images']
+                    )
+                    pdf_chunks.extend(page_chunks)
+                
+                # Stocker le contenu et les chunks
+                pdf_content.chunks = pdf_chunks
                 self.pdfs.append(pdf_content)
-                all_texts.append(pdf_content.total_text)
+                all_chunks.extend(pdf_chunks)
+        
+        print(f"Création des embeddings pour {len(all_chunks)} chunks...")
         
         # Créer les embeddings avec le modèle
         embeddings = []
-        for text in all_texts:
-            inputs = self.tokenizer(text, padding=True, truncation=True, max_length=512, return_tensors="pt")
+        batch_size = 32
+        for i in range(0, len(all_chunks), batch_size):
+            batch = all_chunks[i:i + batch_size]
+            texts = [f"passage: {chunk.text}" for chunk in batch]  # Format spécial pour E5
+            
+            inputs = self.tokenizer(texts, padding=True, truncation=True, 
+                                   max_length=SEARCH_PARAMS['chunk_size'], 
+                                   return_tensors="pt")
+            
             with torch.no_grad():
                 outputs = self.model(**inputs)
-            embeddings.append(outputs.last_hidden_state.mean(dim=1).squeeze().numpy())
+                # Utiliser le token [CLS] pour E5
+                batch_embeddings = outputs.last_hidden_state[:, 0].cpu().numpy()
+                embeddings.extend(batch_embeddings)
         
         # Convertir en array numpy
         embeddings = np.vstack(embeddings)
         
+        # Normaliser les embeddings pour la similarité cosinus
+        faiss.normalize_L2(embeddings)
+        
         # Créer l'index FAISS
         dimension = embeddings.shape[1]
-        self.index = faiss.IndexFlatL2(dimension)
+        self.index = faiss.IndexFlatIP(dimension)  # Produit scalaire pour cosinus
         self.index.add(embeddings.astype(np.float32))
+        
+        # Sauvegarder les chunks pour la recherche
+        self.chunks = all_chunks
 
     def search(self, query: str, k: int = SEARCH_PARAMS["max_results"]) -> List[Tuple[PDFContent, float]]:
-        """Recherche les pages les plus pertinentes."""
-
-        """Recherche les pages les plus pertinentes pour la question."""
-        # Encoder la requête
-        inputs = self.tokenizer(query, padding=True, truncation=True, max_length=512, return_tensors="pt")
+        """Recherche les chunks les plus pertinents et retourne les PDFs correspondants."""
+        # Encoder la requête avec le format E5
+        inputs = self.tokenizer(f"query: {query}", padding=True, truncation=True, 
+                              max_length=SEARCH_PARAMS['chunk_size'], 
+                              return_tensors="pt")
+        
         with torch.no_grad():
             outputs = self.model(**inputs)
-        query_embedding = outputs.last_hidden_state.mean(dim=1).numpy()
+            query_embedding = outputs.last_hidden_state[:, 0].cpu().numpy()  # Token [CLS]
         
-        # Rechercher les k*2 plus proches voisins
-        D, I = self.index.search(query_embedding.astype(np.float32), k*2)
+        # Normaliser l'embedding de la requête
+        faiss.normalize_L2(query_embedding)
         
-        # Retourner les PDFs les plus pertinents
-        final_results = []
+        # Rechercher les chunks les plus pertinents
+        D, I = self.index.search(query_embedding.astype(np.float32), k*3)
+        
+        # Collecter les PDFs uniques avec leurs meilleurs scores
+        pdf_scores = {}
         for idx, score in zip(I[0], D[0]):
-            if idx < len(self.pdfs):  # Vérifier que l'index est valide
-                final_results.append((self.pdfs[idx], score))
+            if idx >= len(self.chunks):
+                continue
+                
+            chunk = self.chunks[idx]
+            current_score = pdf_scores.get(chunk.source, -float('inf'))
+            if score > current_score:
+                pdf_scores[chunk.source] = score
         
-        # Trier par score (distance)
-        final_results.sort(key=lambda x: x[1])
+        # Récupérer les PDFs correspondants
+        final_results = []
+        for pdf in self.pdfs:
+            if pdf.source in pdf_scores:
+                final_results.append((pdf, pdf_scores[pdf.source]))
+        
+        # Trier par score (similarité cosinus)
+        final_results.sort(key=lambda x: x[1], reverse=True)
         return final_results[:k]
 
     def analyze_images_with_pixtral(self, query: str, images: list) -> str:
