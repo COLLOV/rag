@@ -110,7 +110,9 @@ class PDFProcessor:
                     for img in images_to_process:
                         try:
                             desc = self.analyze_image(img)
-                            page_descriptions.append(str(desc))  # Convertir en string
+                            # Convertir le dictionnaire en chaîne JSON lisible
+                            desc_str = f"Image en base64: {desc['image_url']['url'][:50]}..."
+                            page_descriptions.append(desc_str)
                         except Exception as e:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
                     
@@ -172,19 +174,20 @@ class PDFProcessor:
         
         # Préparer le contexte pour le LLM
         context = ""
-        for pdf, score in relevant_pdfs:
-            context += f"\nDocument: {pdf.source}\n"
-            context += f"Contenu:\n{pdf.total_text}\n"
+        for pdf_content, score in relevant_pdfs:
+            context += f"\nDocument: {pdf_content.source}\n"
+            context += f"Contenu:\n{pdf_content.total_text}\n"
             
             # Ajouter les descriptions des images pour chaque page
-            for page in pdf.pages:
+            for page in pdf_content.pages:
                 images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
                 if images:
                     context += f"\nImages de la page {page['number']}:\n"
                     for img in images:
                         try:
                             desc = self.analyze_image(img)
-                            context += f"- Image : {desc}\n"
+                            desc_str = f"Image en base64: {desc['image_url']['url'][:50]}..."
+                            context += f"- {desc_str}\n"
                         except Exception as e:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
         
@@ -197,8 +200,8 @@ class PDFProcessor:
         ]
         
         # Ajouter les images au message
-        for pdf in relevant_pdfs:
-            for page in pdf.pages:
+        for pdf_content, _ in relevant_pdfs:
+            for page in pdf_content.pages:
                 images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
                 for img in images:
                     try:
