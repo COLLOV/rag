@@ -19,14 +19,13 @@ class PDFContent:
     pages: List[dict]  # Liste des pages avec leur texte et images
     total_text: str  # Texte complet du PDF
 
-from config import (VLLM_URL, MODEL_PARAMS, SEARCH_PARAMS, 
+from config import (PIXTRAL_URL, MISTRAL_URL, MODEL_PARAMS, SEARCH_PARAMS, 
                   TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER, PIXTRAL_PATH,
                   MISTRAL_PATH)
 
 class PDFProcessor:
-    def __init__(self, pdf_folder: str, vllm_url: str = VLLM_URL):
+    def __init__(self, pdf_folder: str):
         self.pdf_folder = Path(pdf_folder)
-        self.vllm_url = vllm_url
         self.temp_dir = Path(TEMP_DIR)
         self.temp_dir.mkdir(exist_ok=True)
         # Charger le tokenizer et le modèle
@@ -162,7 +161,7 @@ class PDFProcessor:
         
         # Appeler Pixtral
         response = requests.post(
-            self.vllm_url,
+            PIXTRAL_URL,
             headers={"Content-Type": "application/json"},
             json={
                 "model": PIXTRAL_PATH,
@@ -219,7 +218,7 @@ class PDFProcessor:
         
         # Générer la réponse finale avec Mistral
         response = requests.post(
-            self.vllm_url,
+            MISTRAL_URL,
             headers={"Content-Type": "application/json"},
             json={
                 "model": MISTRAL_PATH,

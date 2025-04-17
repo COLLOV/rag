@@ -11,9 +11,10 @@ PDF_FOLDER.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
 # URLs et modèles
-VLLM_URL = "http://localhost:8085/v1/chat/completions"
-PIXTRAL_PATH = "/home/llama/models/base_models/Pixtral-12B-2409"  # Chemin vers le modèle Pixtral
-MISTRAL_PATH = "Mistral-Large-Instruct-2407-AWQ"  # Modèle pour le texte
+PIXTRAL_URL = "http://localhost:8085/v1/chat/completions"  # Port pour Pixtral
+MISTRAL_URL = "http://localhost:5263/v1/chat/completions"  # Port pour Mistral
+PIXTRAL_PATH = "/home/llama/models/base_models/Pixtral-12B-2409"  # Modèle Pixtral
+MISTRAL_PATH = "Mistral-Large-Instruct-2407-AWQ"  # Modèle Mistral
 
 # Paramètres du modèle
 MODEL_PARAMS = {
