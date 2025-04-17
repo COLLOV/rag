@@ -65,7 +65,8 @@ class PDFProcessor:
         return PDFContent(
             source=filename,
             pages=pages,
-            total_text='\n'.join(full_text)
+            total_text='\n'.join(full_text),
+            chunks=[]  # Les chunks seront créés plus tard dans process_pdf_directory
         )
 
     def encode_image_base64(self, image: Image.Image) -> dict:
