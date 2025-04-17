@@ -251,14 +251,22 @@ def main():
     print("Traitement des PDF et création de l'index...")
     processor.process_pdf_directory()
     
-    # Exemple de requête
-    query = "Comment changer de mot de passe ?"
-    print(f"\nQuestion : {query}")
-    
-    # Générer une réponse
-    response = processor.generate_response(query)
-    print("\nRéponse :")
-    print(response)
+    while True:
+        # Demander la question à l'utilisateur
+        print("\nPosez votre question (ou tapez 'q' pour quitter) :")
+        query = input("> ").strip()
+        
+        # Vérifier si l'utilisateur veut quitter
+        if query.lower() == 'q':
+            print("Au revoir !")
+            break
+        
+        # Générer et afficher la réponse
+        print("\nRecherche de la réponse...")
+        response = processor.generate_response(query)
+        print("\nRéponse :")
+        print(response)
+        print("\n" + "-"*50)
 
 if __name__ == "__main__":
     main()
