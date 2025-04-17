@@ -110,20 +110,17 @@ class PDFProcessor:
                     for img in images_to_process:
                         try:
                             desc = self.analyze_image(img)
-                            page_descriptions.append(desc)
+                            page_descriptions.append(str(desc))  # Convertir en string
                         except Exception as e:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
                     
                     image_descriptions_by_page.append(page_descriptions)
                 
-                # Combiner tout le contenu du PDF
-                combined_text = f"""Document: {pdf_content.source}\n"""
-                combined_text += f"Contenu textuel:\n{pdf_content.total_text}\n"
-                combined_text += "\nDescriptions des images:\n"
-                
+                # Combiner le texte et les descriptions d'images
+                combined_text = pdf_content.total_text
                 for page_num, descriptions in enumerate(image_descriptions_by_page, 1):
                     if descriptions:
-                        combined_text += f"Page {page_num}:\n"
+                        combined_text += "\nImages de la page " + str(page_num) + ":\n"
                         combined_text += "\n".join(descriptions) + "\n"
                 
                 all_texts.append(combined_text)
