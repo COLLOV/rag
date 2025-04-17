@@ -206,22 +206,26 @@ class PDFProcessor:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
         
         # Construire le prompt pour le LLM
-        messages = [
-            {"role": "system", "content": "Tu es un assistant serviable qui répond aux questions en utilisant uniquement les informations fournies dans le contexte. Si tu ne trouves pas l'information dans le contexte, dis-le clairement."}, 
-            {"role": "user", "content": f"Contexte:\n{context}\n\nQuestion: {query}\n\nRéponds à la question en utilisant uniquement les informations du contexte ci-dessus. Sois précis et cite les numéros de page et les documents sources."}
-        ]
+        prompt = f"""Tu es un assistant serviable qui répond aux questions en utilisant uniquement les informations fournies dans le contexte. Si tu ne trouves pas l'information dans le contexte, dis-le clairement.
+
+Contexte:
+{context}
+
+Question: {query}
+
+Réponds à la question en utilisant uniquement les informations du contexte ci-dessus. Sois précis et cite les numéros de page et les documents sources."""
         
         # Appeler l'API VLLM pour générer la réponse
         response = requests.post(
             self.vllm_url,
             json={
-                "messages": messages,
+                "prompt": prompt,
                 **MODEL_PARAMS
             }
         )
         
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+            return response.json()["text"][0]
         else:
             return "Désolé, je n'ai pas pu générer de réponse."
 
