@@ -11,6 +11,7 @@ from PIL import Image
 from transformers import AutoTokenizer, AutoModel
 import torch
 from dataclasses import dataclass
+import uuid
 
 @dataclass
 class PDFContent:
@@ -62,11 +63,16 @@ class PDFProcessor:
     def encode_image_base64(self, image: Image.Image) -> dict:
         """Encode une image en base64 pour l'API VLLM."""
         # Sauvegarder temporairement l'image
-        temp_path = self.temp_dir / "temp.jpg"
+        temp_path = self.temp_dir / f"temp_{uuid.uuid4()}.jpg"
         image.save(temp_path, "JPEG")
         
+        # Lire et encoder en base64
         with open(temp_path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode("utf-8")
+        
+        # Nettoyer le fichier temporaire
+        temp_path.unlink()
+        
         return {
             "type": "image_url",
             "image_url": {
@@ -74,30 +80,10 @@ class PDFProcessor:
             }
         }
 
-    def analyze_image(self, image: Image.Image) -> str:
-        """Analyse une image avec Pixtral via VLLM et retourne une description."""
-        image_data = self.encode_image_base64(image)
-        
-        messages = [
-            {"role": "user", "content": [
-                image_data,
-                "Décris cette image en détail."
-            ]}
-        ]
-        
-        response = requests.post(
-            self.vllm_url,
-            json={
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 500
-            }
-        )
-        
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-        else:
-            return "Erreur lors de l'analyse de l'image"
+    def analyze_image(self, image: Image.Image) -> dict:
+        """Prépare une image pour l'API VLLM."""
+        # Encoder directement l'image en base64 avec le bon format
+        return self.encode_image_base64(image)
 
     def process_pdf_directory(self) -> None:
         """Traite tous les PDF dans le dossier et crée l'index de recherche."""
@@ -201,32 +187,57 @@ class PDFProcessor:
                     for img in images:
                         try:
                             desc = self.analyze_image(img)
-                            context += f"- {desc}\n"
+                            context += f"- Image : {desc}\n"
                         except Exception as e:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
         
-        # Construire le prompt pour le LLM
-        prompt = f"""Tu es un assistant serviable qui répond aux questions en utilisant uniquement les informations fournies dans le contexte. Si tu ne trouves pas l'information dans le contexte, dis-le clairement.
-
-Contexte:
-{context}
-
-Question: {query}
-
-Réponds à la question en utilisant uniquement les informations du contexte ci-dessus. Sois précis et cite les numéros de page et les documents sources."""
+        # Préparer les messages pour le LLM
+        system_message = "Tu es un assistant serviable qui répond aux questions en utilisant uniquement les informations fournies. Si tu ne trouves pas l'information dans le contexte, dis-le clairement."
         
-        # Appeler l'API VLLM pour générer la réponse
+        # Préparer les messages pour l'API
+        messages = [
+            {
+                "role": "system",
+                "content": system_message
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Voici des extraits de documents avec leur contexte. Ta tâche est de répondre précisément à la question suivante : {query}\n\nContexte textuel:\n{context}"
+                    }
+                ]
+            }
+        ]
+        
+        # Ajouter les images au dernier message
+        for pdf in relevant_pdfs:
+            for page in pdf.pages:
+                images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
+                for img in images:
+                    try:
+                        image_content = self.analyze_image(img)
+                        messages[-1]['content'].append(image_content)
+                    except Exception as e:
+                        print(f"Erreur lors de l'analyse d'une image : {e}")
+        
+        # Appeler l'API VLLM
         response = requests.post(
             self.vllm_url,
+            headers={"Content-Type": "application/json"},
             json={
-                "prompt": prompt,
+                "model": "mistral",
+                "messages": messages,
                 **MODEL_PARAMS
             }
         )
         
         if response.status_code == 200:
-            return response.json()["text"][0]
+            return response.json()["choices"][0]["message"]["content"]
         else:
+            print(f"Erreur : {response.status_code}")
+            print(f"Détails : {response.text}")
             return "Désolé, je n'ai pas pu générer de réponse."
 
 def main():
