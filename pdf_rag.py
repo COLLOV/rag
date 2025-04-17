@@ -20,7 +20,8 @@ class PDFContent:
     total_text: str  # Texte complet du PDF
 
 from config import (VLLM_URL, MODEL_PARAMS, SEARCH_PARAMS, 
-                  TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER, MODEL_PATH)
+                  TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER, PIXTRAL_PATH,
+                  MISTRAL_PATH)
 
 class PDFProcessor:
     def __init__(self, pdf_folder: str, vllm_url: str = VLLM_URL):
@@ -99,34 +100,9 @@ class PDFProcessor:
                 # Extraire tout le contenu du PDF
                 pdf_content = self.extract_from_pdf(pdf_path)
                 
-                # Analyser les images de chaque page
-                image_descriptions_by_page = []
-                
-                for page in pdf_content.pages:
-                    max_images = SEARCH_PARAMS["max_images_per_page"]
-                    images_to_process = page['images'][:max_images]
-                    
-                    page_descriptions = []
-                    for img in images_to_process:
-                        try:
-                            desc = self.analyze_image(img)
-                            # Convertir le dictionnaire en chaîne JSON lisible
-                            desc_str = f"Image en base64: {desc['image_url']['url'][:50]}..."
-                            page_descriptions.append(desc_str)
-                        except Exception as e:
-                            print(f"Erreur lors de l'analyse d'une image : {e}")
-                    
-                    image_descriptions_by_page.append(page_descriptions)
-                
-                # Combiner le texte et les descriptions d'images
-                combined_text = pdf_content.total_text
-                for page_num, descriptions in enumerate(image_descriptions_by_page, 1):
-                    if descriptions:
-                        combined_text += "\nImages de la page " + str(page_num) + ":\n"
-                        combined_text += "\n".join(descriptions) + "\n"
-                
-                all_texts.append(combined_text)
+                # Stocker le contenu du PDF
                 self.pdfs.append(pdf_content)
+                all_texts.append(pdf_content.total_text)
         
         # Créer les embeddings avec le modèle
         embeddings = []
@@ -167,56 +143,34 @@ class PDFProcessor:
         final_results.sort(key=lambda x: x[1])
         return final_results[:k]
 
-    def generate_response(self, query: str, k: int = 3) -> str:
-        """Génère une réponse à la question en utilisant les documents pertinents."""
-        # Récupérer les PDFs pertinents
-        relevant_pdfs = self.search(query, k=k)
-        
-        # Préparer le contexte pour le LLM
-        context = ""
-        for pdf_content, score in relevant_pdfs:
-            context += f"\nDocument: {pdf_content.source}\n"
-            context += f"Contenu:\n{pdf_content.total_text}\n"
-            
-            # Ajouter les descriptions des images pour chaque page
-            for page in pdf_content.pages:
-                images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
-                if images:
-                    context += f"\nImages de la page {page['number']}:\n"
-                    for img in images:
-                        try:
-                            desc = self.analyze_image(img)
-                            desc_str = f"Image en base64: {desc['image_url']['url'][:50]}..."
-                            context += f"- {desc_str}\n"
-                        except Exception as e:
-                            print(f"Erreur lors de l'analyse d'une image : {e}")
-        
-        # Préparer le message utilisateur avec le texte et les images
+    def analyze_images_with_pixtral(self, query: str, images: list) -> str:
+        """Analyse un lot d'images avec Pixtral."""
         user_content = [
             {
                 "type": "text",
-                "text": f"Voici des extraits de documents. Ta tâche est de répondre précisément à la question suivante en utilisant ces informations : {query}\n\nContexte:\n{context}"
+                "text": f"Voici des images extraites d'un document. Décris ce que tu vois dans ces images en lien avec la question : {query}"
             }
         ]
         
         # Ajouter les images au message
-        for pdf_content, _ in relevant_pdfs:
-            for page in pdf_content.pages:
-                images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
-                for img in images:
-                    try:
-                        image_content = self.analyze_image(img)
-                        user_content.append(image_content)
-                    except Exception as e:
-                        print(f"Erreur lors de l'analyse d'une image : {e}")
+        for img in images:
+            try:
+                image_content = self.analyze_image(img)
+                user_content.append(image_content)
+            except Exception as e:
+                print(f"Erreur lors de l'analyse d'une image : {e}")
         
-        # Appeler l'API VLLM
+        # Appeler Pixtral
         response = requests.post(
             self.vllm_url,
             headers={"Content-Type": "application/json"},
             json={
-                "model": MODEL_PATH,
+                "model": PIXTRAL_PATH,
                 "messages": [
+                    {
+                        "role": "system",
+                        "content": "Tu es un assistant expert en analyse d'images. Ta tâche est de décrire précisément le contenu des images en lien avec la question posée. Décris les éléments visuels importants, le texte visible, et tout ce qui pourrait aider à répondre à la question."
+                    },
                     {
                         "role": "user",
                         "content": user_content
@@ -229,7 +183,64 @@ class PDFProcessor:
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         else:
-            print(f"Erreur : {response.status_code}")
+            print(f"Erreur Pixtral : {response.status_code}")
+            print(f"Détails : {response.text}")
+            return ""
+    
+    def generate_response(self, query: str, k: int = 3) -> str:
+        """Génère une réponse à la question en utilisant les documents pertinents."""
+        # Récupérer les PDFs pertinents
+        relevant_pdfs = self.search(query, k=k)
+        
+        # Préparer le contexte textuel
+        context = ""
+        all_images = []
+        
+        for pdf_content, score in relevant_pdfs:
+            context += f"\nDocument: {pdf_content.source}\n"
+            context += f"Contenu:\n{pdf_content.total_text}\n"
+            
+            # Collecter toutes les images
+            for page in pdf_content.pages:
+                images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
+                all_images.extend(images)
+        
+        # Analyser les images par lots de 4
+        image_descriptions = []
+        for i in range(0, len(all_images), SEARCH_PARAMS['max_total_images']):
+            batch = all_images[i:i + SEARCH_PARAMS['max_total_images']]
+            description = self.analyze_images_with_pixtral(query, batch)
+            if description:
+                image_descriptions.append(description)
+        
+        # Combiner toutes les informations
+        full_context = f"Contexte textuel:\n{context}\n\nAnalyse des images:\n"
+        full_context += "\n".join(image_descriptions)
+        
+        # Générer la réponse finale avec Mistral
+        response = requests.post(
+            self.vllm_url,
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": MISTRAL_PATH,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Tu es un assistant expert qui répond aux questions en utilisant uniquement les informations fournies. Si tu ne trouves pas l'information dans le contexte, dis-le clairement."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Question : {query}\n\nInformations disponibles :\n{full_context}"
+                    }
+                ],
+                **MODEL_PARAMS
+            }
+        )
+        
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            print(f"Erreur Mistral : {response.status_code}")
             print(f"Détails : {response.text}")
             return "Désolé, je n'ai pas pu générer de réponse."
 

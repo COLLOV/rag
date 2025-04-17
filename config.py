@@ -12,7 +12,8 @@ TEMP_DIR.mkdir(exist_ok=True)
 
 # URLs et modèles
 VLLM_URL = "http://localhost:8085/v1/chat/completions"
-MODEL_PATH = "/home/llama/models/base_models/Pixtral-12B-2409"  # Chemin vers le modèle Pixtral
+PIXTRAL_PATH = "/home/llama/models/base_models/Pixtral-12B-2409"  # Chemin vers le modèle Pixtral
+MISTRAL_PATH = "Mistral-Large-Instruct-2407-AWQ"  # Modèle pour le texte
 
 # Paramètres du modèle
 MODEL_PARAMS = {
@@ -22,8 +23,9 @@ MODEL_PARAMS = {
 
 # Paramètres de recherche
 SEARCH_PARAMS = {
-    "max_results": 8,
-    "max_images_per_page": 4
+    "max_results": 3,  # Nombre de résultats à retourner
+    "max_images_per_page": 2,  # Nombre maximum d'images à traiter par page
+    "max_total_images": 4  # Nombre maximum d'images total pour Pixtral
 }
 
 # Modèle d'embedding
