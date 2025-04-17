@@ -20,7 +20,7 @@ class PDFContent:
     total_text: str  # Texte complet du PDF
 
 from config import (VLLM_URL, MODEL_PARAMS, SEARCH_PARAMS, 
-                  TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER)
+                  TEMP_DIR, EMBEDDING_MODEL, PDF_FOLDER, MODEL_PATH)
 
 class PDFProcessor:
     def __init__(self, pdf_folder: str, vllm_url: str = VLLM_URL):
@@ -191,34 +191,22 @@ class PDFProcessor:
                         except Exception as e:
                             print(f"Erreur lors de l'analyse d'une image : {e}")
         
-        # Préparer les messages pour le LLM
-        system_message = "Tu es un assistant serviable qui répond aux questions en utilisant uniquement les informations fournies. Si tu ne trouves pas l'information dans le contexte, dis-le clairement."
-        
-        # Préparer les messages pour l'API
-        messages = [
+        # Préparer le message utilisateur avec le texte et les images
+        user_content = [
             {
-                "role": "system",
-                "content": system_message
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Voici des extraits de documents avec leur contexte. Ta tâche est de répondre précisément à la question suivante : {query}\n\nContexte textuel:\n{context}"
-                    }
-                ]
+                "type": "text",
+                "text": f"Voici des extraits de documents. Ta tâche est de répondre précisément à la question suivante en utilisant ces informations : {query}\n\nContexte:\n{context}"
             }
         ]
         
-        # Ajouter les images au dernier message
+        # Ajouter les images au message
         for pdf in relevant_pdfs:
             for page in pdf.pages:
                 images = page['images'][:SEARCH_PARAMS['max_images_per_page']]
                 for img in images:
                     try:
                         image_content = self.analyze_image(img)
-                        messages[-1]['content'].append(image_content)
+                        user_content.append(image_content)
                     except Exception as e:
                         print(f"Erreur lors de l'analyse d'une image : {e}")
         
@@ -227,8 +215,13 @@ class PDFProcessor:
             self.vllm_url,
             headers={"Content-Type": "application/json"},
             json={
-                "model": "mistral",
-                "messages": messages,
+                "model": MODEL_PATH,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": user_content
+                    }
+                ],
                 **MODEL_PARAMS
             }
         )
