@@ -31,7 +31,7 @@ class PDFProcessor:
         self.tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
         self.model = AutoModel.from_pretrained(EMBEDDING_MODEL)
         self.index = None
-        self.pages: List[PageContent] = []
+        self.pdfs: List[PDFContent] = []
         
     def extract_from_pdf(self, pdf_path: str) -> PDFContent:
         """Extrait le texte et les images du PDF complet."""
@@ -159,7 +159,7 @@ class PDFProcessor:
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(embeddings.astype(np.float32))
 
-    def search(self, query: str, k: int = SEARCH_PARAMS["max_results"]) -> List[Tuple[PageContent, float]]:
+    def search(self, query: str, k: int = SEARCH_PARAMS["max_results"]) -> List[Tuple[PDFContent, float]]:
         """Recherche les pages les plus pertinentes."""
 
         """Recherche les pages les plus pertinentes pour la question."""
@@ -172,38 +172,13 @@ class PDFProcessor:
         # Rechercher les k*2 plus proches voisins
         D, I = self.index.search(query_embedding.astype(np.float32), k*2)
         
-        # Organiser les résultats par document
-        docs_pages = {}
-        for idx, dist in zip(I[0], D[0]):
-            page = self.pages[idx]
-            key = page.source
-            if key not in docs_pages:
-                docs_pages[key] = []
-            docs_pages[key].append((page, dist))
-        
-        # Trier les pages par numéro pour chaque document
-        for key in docs_pages:
-            docs_pages[key].sort(key=lambda x: x[0].page_number)
-        
-        # Sélectionner les séquences de pages consécutives
+        # Retourner les PDFs les plus pertinents
         final_results = []
-        for doc_pages in docs_pages.values():
-            sequences = []
-            current_seq = [doc_pages[0]]
-            
-            for i in range(1, len(doc_pages)):
-                if doc_pages[i][0].page_number == doc_pages[i-1][0].page_number + 1:
-                    current_seq.append(doc_pages[i])
-                else:
-                    sequences.append(current_seq)
-                    current_seq = [doc_pages[i]]
-            sequences.append(current_seq)
-            
-            if sequences:
-                longest_seq = max(sequences, key=len)
-                final_results.extend(longest_seq)
+        for idx, score in zip(I[0], D[0]):
+            if idx < len(self.pdfs):  # Vérifier que l'index est valide
+                final_results.append((self.pdfs[idx], score))
         
-        # Trier par score de similarité et retourner les k meilleurs résultats
+        # Trier par score (distance)
         final_results.sort(key=lambda x: x[1])
         return final_results[:k]
 
